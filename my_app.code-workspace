@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"name": "turbine",
+			"path": "."
+		}
+	],
+	"settings": {
+		"geminiCode.apiKey": "AIzaSyDnbJnCX43RlnqQFlp2YGQDCf_LmVAv0Qs",
+		"geminiCode.authMethod": "apikey"
+	}
+}
