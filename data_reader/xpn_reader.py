@@ -26,12 +26,12 @@ class XPNReader(BaseReader):
 
     def read(self):
         """
-        Reads a .xpr file with format:
+        Reads a .xpn file with format:
         Raw Scan Data Listing ...
-        Data Seq:X,Y,Z,I,J,K
+        Data Seq:X,Y,Z,I,J,K,HTol,LTol
         Point Number ...
             1   -18.3390 -24.7582 ...
-        Returns: pandas DataFrame with columns [X, Y, Z, I, J, K]
+        Returns: pandas DataFrame with columns [Point#, X, Y, Z, I, J, K, HTol, LTol]
         """
         data = []
         start_reading = False
@@ -48,11 +48,10 @@ class XPNReader(BaseReader):
 
                 if start_reading:
                     parts = line.split()
-                    if len(parts) >= 7:  # PointNumber + 6 values
-                        # Skip first column (point number)
-                        values = [float(x) for x in parts[1:7]]
+                    if len(parts) >= 9:  # PointNumber + 8 values
+                        values = [float(x) for x in parts[0:9]]
                         data.append(values)
 
         # Create DataFrame
-        df = pd.DataFrame(data, columns=["X", "Y", "Z", "I", "J", "K"])
+        df = pd.DataFrame(data, columns=["Point#", "X", "Y", "Z", "I", "J", "K", "HTol", "LTol"])
         return df
