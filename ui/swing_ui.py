@@ -6,7 +6,7 @@ import os
 
 from ui.file_operations import load_xpr_folder, load_xpn_folder, find_file_in_dir
 from ui.data_processing import compute_report, apply_correction
-from ui.ui_components import display_dataframe, display_combined_plot
+from ui.ui_components import display_dataframe, display_combined_plot, display_combined_plot_from_df, save_df_to_pdf
 
 class TurbineUI(tk.Tk):
     def __init__(self):
@@ -18,6 +18,7 @@ class TurbineUI(tk.Tk):
         self.xpn_df = None
         self.xpr_folder_path = None
         self.xpn_folder_path = None
+        self.base_name = None
 
         # Create a canvas and a scrollbar
         canvas = tk.Canvas(self)
@@ -80,8 +81,8 @@ class TurbineUI(tk.Tk):
             messagebox.showerror("Error", "No .xpr file found in the selected RAW folder.")
             return
 
-        base_name = os.path.basename(xpr_file).split('.')[0]
-        xpn_file_name = base_name + ".XPN"
+        self.base_name = os.path.basename(xpr_file).split('.')[0]
+        xpn_file_name = self.base_name + ".XPN"
         xpn_file = os.path.join(self.xpn_folder_path, xpn_file_name)
 
         if not os.path.exists(xpn_file):
@@ -132,11 +133,26 @@ class TurbineUI(tk.Tk):
 
                         self.current_report_df = apply_correction(self.current_report_df.copy())
                         
+                        # Save the corrected report
+                        reports_dir = "data/Reports"
+                        os.makedirs(reports_dir, exist_ok=True)
+                        output_path = os.path.join(reports_dir, f"{self.base_name}.csv")
+                        self.current_report_df.to_csv(output_path, index=False)
+                        
+                        pdf_output_path = os.path.join(reports_dir, f"{self.base_name}.pdf")
+                        save_df_to_pdf(self.current_report_df, pdf_output_path)
+                        
+                        plot_output_path = os.path.join(reports_dir, f"{self.base_name}_plot.pdf")
+                        
+                        messagebox.showinfo("Success", f"Corrected report saved to {output_path}, {pdf_output_path} and {plot_output_path}")
+
                         # Destroy the current correction UI
                         correction_frame.destroy()
                         
                         # Display the new corrected report
                         display_dataframe(self, self.current_report_df, f"Corrected Report", self.correction_row_counter)
+                        self.correction_row_counter += 1
+                        display_combined_plot_from_df(self, self.current_report_df, "Corrected Combined Plot", self.correction_row_counter, pdf_path=plot_output_path)
                         self.correction_row_counter += 1
                         
                         # Setup the next correction UI

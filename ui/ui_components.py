@@ -3,6 +3,7 @@ from tkinter import ttk
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import pandas as pd
+from matplotlib.backends.backend_pdf import PdfPages
 
 def display_dataframe(app, df, title, row):
     frame = ttk.LabelFrame(app.data_plot_frame, text=title, padding="10")
@@ -117,3 +118,97 @@ def display_combined_plot(app):
     y_axis_var.trace("w", update_plot)
 
     update_plot()
+
+def display_combined_plot_from_df(app, df, title, row, pdf_path=None):
+    frame = ttk.LabelFrame(app.data_plot_frame, text=title, padding="10")
+    frame.grid(row=row, column=0, padx=10, pady=5, sticky="nsew")
+
+    xpn_df = df[['XPN X', 'XPN Y']].copy()
+    xpn_df.columns = ['X', 'Y']
+    xpn_df['source'] = 'Nominal'
+
+    xpr_df = df[['XPR X', 'XPR Y']].copy()
+    xpr_df.columns = ['X', 'Y']
+    xpr_df['source'] = 'Actual'
+
+    combined_df = pd.concat([xpn_df, xpr_df], ignore_index=True)
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+    canvas = FigureCanvasTkAgg(fig, master=frame)
+    canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+
+    if len(combined_df.columns) < 2:
+        ttk.Label(frame, text="Data does not have enough columns for a scatter plot.").pack()
+        return
+
+    def update_plot(*args):
+        ax.clear()
+        colors = {'Nominal': 'b', 'Actual': 'r'}
+        ax.scatter(combined_df['X'], combined_df['Y'], c=combined_df['source'].map(colors))
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_title(title)
+        canvas.draw()
+
+    update_plot()
+
+    if pdf_path:
+        fig.savefig(pdf_path, bbox_inches='tight')
+        
+def save_df_to_pdf(df, path, title="Data Report"):
+    with PdfPages(path) as pp:
+        # --- Page 1: Table ---
+        fig, ax = plt.subplots(figsize=(12, 4))
+        ax.axis('tight')
+        ax.axis('off')
+        the_table = ax.table(cellText=df.values, colLabels=df.columns, loc='center')
+        the_table.auto_set_font_size(False)
+        the_table.set_fontsize(8)
+        the_table.scale(1.2, 1.2)
+
+        plt.title(f"{title} - Table", fontsize=12, pad=20)
+        pp.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+
+        # --- Page 2: Scatter Plot (Nominal vs Raw) ---
+        fig, ax = plt.subplots(figsize=(6, 5))
+
+        ax.scatter(df['XPN X'], df['XPN Y'], c='b', label='XPN - Nominal Data')
+        ax.scatter(df['XPR X'], df['XPR Y'], c='r', label='XPR - Raw Data')
+
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_title(f"{title} - Scatter Plot")
+        ax.legend(loc="best")
+
+        pp.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+
+        # --- Page 3: Deviation heatmap scatter ---
+        if "Deviation" in df.columns:
+            fig, ax = plt.subplots(figsize=(6, 5))
+            sc = ax.scatter(df['XPN X'], df['XPN Y'], c=df['Deviation'],
+                            cmap='viridis', s=40, edgecolors='k')
+
+            ax.set_xlabel("X")
+            ax.set_ylabel("Y")
+            ax.set_title(f"{title} - Deviation Map")
+
+            # Add colorbar
+            cbar = plt.colorbar(sc, ax=ax)
+            cbar.set_label("Deviation")
+
+            pp.savefig(fig, bbox_inches='tight')
+            plt.close(fig)
+# def save_df_to_pdf(df, path):
+#     fig, ax = plt.subplots(figsize=(12, 4))
+#     ax.axis('tight')
+#     ax.axis('off')
+#     the_table = ax.table(cellText=df.values, colLabels=df.columns, loc='center')
+#     the_table.auto_set_font_size(False)
+#     the_table.set_fontsize(8)
+#     the_table.scale(1.2, 1.2)
+
+#     pp = PdfPages(path)
+#     pp.savefig(fig, bbox_inches='tight')
+#     pp.close()
