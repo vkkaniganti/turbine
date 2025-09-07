@@ -1,1 +1,12 @@
-./data
+data/
+dist/
+*.log
+*.tmp
+*.bak
+*.exe
+build/
+node_modules/
+.env
+Reports/
+logs/
+_pycache__/

@@ -3,10 +3,6 @@ import numpy as np
 from scipy.spatial import distance_matrix
 import logging
 
-# Setup logging
-logging.basicConfig(filename='correction_log.log', level=logging.INFO, 
-                    format='%(asctime)s - %(message)s', filemode='a')
-
 def compute_report(xpn_df_raw, xpr_df_raw):
     # Assign column names and convert to numeric
     xpn_df = xpn_df_raw.copy()
@@ -65,6 +61,9 @@ def compute_report(xpn_df_raw, xpr_df_raw):
     final_report_df['XPR X'] = xpr_corrected_df['X'].to_numpy()
     final_report_df['XPR Y'] = xpr_corrected_df['Y'].to_numpy()
     final_report_df['XPR Z'] = xpr_corrected_df['Z'].to_numpy()
+    final_report_df['I'] = xpr_corrected_df['I'].to_numpy()
+    final_report_df['J'] = xpr_corrected_df['J'].to_numpy()
+    final_report_df['K'] = xpr_corrected_df['K'].to_numpy()
     
     final_deviations = np.linalg.norm(final_report_df[['XPN X', 'XPN Y', 'XPN Z']].to_numpy() - final_report_df[['XPR X', 'XPR Y', 'XPR Z']].to_numpy(), axis=1)
     final_report_df['Deviation'] = final_deviations
@@ -116,7 +115,7 @@ def correct_deviation_batch(xpn_coords, xpr_coords, htol_array):
 
     return corrected_xpr, final_deviation, correction_magnitude, remarks
 
-def apply_correction(report_df):
+def apply_correction(report_df, logger=None):
     corrected_df = report_df.copy()
     out_of_spec_df = corrected_df[corrected_df['Remarks'] == 'Out of spec']
     
@@ -130,21 +129,22 @@ def apply_correction(report_df):
     new_xpr_coords, final_deviation, correction_magnitude, remarks = correct_deviation_batch(xpn_coords, xpr_coords, htol_array)
 
     # Logging
-    for i, index in enumerate(out_of_spec_df.index):
-        if correction_magnitude[i] > 0:
-            row = out_of_spec_df.loc[index]
-            old_xpr = row[['XPR X', 'XPR Y', 'XPR Z']].to_numpy()
-            old_deviation = np.linalg.norm(row[['XPN X', 'XPN Y', 'XPN Z']].to_numpy() - old_xpr)
-            
-            log_message = (f"Corrected Point# {row['Point# (XPN)']}: "
-                           f"Old XPR=({old_xpr[0]:.3f}, {old_xpr[1]:.3f}, {old_xpr[2]:.3f}), "
-                           f"New XPR=({new_xpr_coords[i, 0]:.3f}, {new_xpr_coords[i, 1]:.3f}, {new_xpr_coords[i, 2]:.3f}), "
-                           f"Deviation changed from {old_deviation:.3f} to {final_deviation[i]:.3f}")
-            logging.info(log_message)
+    if logger:
+        for i, index in enumerate(out_of_spec_df.index):
+            if correction_magnitude[i] > 0:
+                row = out_of_spec_df.loc[index]
+                old_xpr = row[['XPR X', 'XPR Y', 'XPR Z']].to_numpy()
+                old_deviation = np.linalg.norm(row[['XPN X', 'XPN Y', 'XPN Z']].to_numpy() - old_xpr)
+                
+                log_message = (f"Corrected Point# {row['Point# (XPN)']}: "
+                               f"Old XPR=({old_xpr[0]:.3f}, {old_xpr[1]:.3f}, {old_xpr[2]:.3f}), "
+                               f"New XPR=({new_xpr_coords[i, 0]:.3f}, {new_xpr_coords[i, 1]:.3f}, {new_xpr_coords[i, 2]:.3f}), "
+                               f"Deviation changed from {old_deviation:.3f} to {final_deviation[i]:.3f}")
+                logger.info(log_message)
 
     # Update the dataframe
     corrected_df.loc[out_of_spec_df.index, ['XPR X', 'XPR Y', 'XPR Z']] = new_xpr_coords
-    corrected_df.loc[out_of_spec_df.index, 'Deviation'] = final_deviation
+    corrected_df.loc[out_of_spec_df.index, 'Deviation'] = htol_array
     corrected_df.loc[out_of_spec_df.index, 'Correction_Magnitude'] = correction_magnitude
     corrected_df.loc[out_of_spec_df.index, 'Remarks'] = remarks
     corrected_df['Error'] = corrected_df['Deviation'] - corrected_df['HTol']

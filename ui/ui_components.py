@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import pandas as pd
 from matplotlib.backends.backend_pdf import PdfPages
+import datetime
+import numpy as np
 
 def display_dataframe(app, df, title, row):
     frame = ttk.LabelFrame(app.data_plot_frame, text=title, padding="10")
@@ -200,15 +202,76 @@ def save_df_to_pdf(df, path, title="Data Report"):
 
             pp.savefig(fig, bbox_inches='tight')
             plt.close(fig)
-# def save_df_to_pdf(df, path):
-#     fig, ax = plt.subplots(figsize=(12, 4))
-#     ax.axis('tight')
-#     ax.axis('off')
-#     the_table = ax.table(cellText=df.values, colLabels=df.columns, loc='center')
-#     the_table.auto_set_font_size(False)
-#     the_table.set_fontsize(8)
-#     the_table.scale(1.2, 1.2)
 
-#     pp = PdfPages(path)
-#     pp.savefig(fig, bbox_inches='tight')
-#     pp.close()
+
+    def generate_cmm_report(df, features, output_pdf, logger=None):
+        with PdfPages(output_pdf) as pp:
+            # Page 1: Cover & Summary
+            fig, ax = plt.subplots(figsize=(11.69, 8.27))  # A4 landscape
+            ax.axis("off")
+            ax.text(0.5, 0.9, "CMM INSPECTION REPORT", ha="center", fontsize=20, weight="bold")
+
+            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ax.text(0.5, 0.85, f"Generated: {now}", ha="center", fontsize=10)
+
+            # Placeholders for customer info
+            ax.text(0.05, 0.78, "Customer: ____________________", fontsize=11)
+            ax.text(0.05, 0.74, "Project: _____________________", fontsize=11)
+            ax.text(0.05, 0.70, "Drawing No: _________________", fontsize=11)
+            ax.text(0.05, 0.66, "Report No: __________________", fontsize=11)
+
+            # Features
+            y = 0.58
+            ax.text(0.05, y, "Geometric Features:", fontsize=12, weight="bold")
+            for k, v in features.items():
+                y -= 0.04
+                ax.text(0.07, y, f"{k}: {v:.4f}" if isinstance(v, (int, float, np.floating)) else f"{k}: {v}", fontsize=10)
+
+            pp.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+            # Page 2+: Data table
+            df_print = df.round(4)
+            max_rows = 35
+            for start in range(0, len(df_print), max_rows):
+                subset = df_print.iloc[start:start+max_rows]
+                fig, ax = plt.subplots(figsize=(11.69, 8.27))
+                ax.axis("off")
+                table = ax.table(cellText=subset.values, colLabels=subset.columns, loc="center")
+                table.auto_set_font_size(False)
+                table.set_fontsize(8)
+                table.scale(1.1, 1.2)
+                ax.set_title(f"Corrected Data Rows {start+1}-{min(start+max_rows, len(df_print))}", fontsize=11)
+                pp.savefig(fig, bbox_inches="tight")
+                plt.close(fig)
+
+            # Scatter Plot (Nominal vs Raw)
+            fig, ax = plt.subplots(figsize=(8,6))
+            ax.scatter(df['XPN X'], df['XPN Y'], c='blue', label="XPN - Nominal Data")
+            ax.scatter(df['XPR X'], df['XPR Y'], c='red', label="XPR - Corrected Raw Data")
+            ax.set_xlabel("X"); ax.set_ylabel("Y")
+            ax.set_title("Nominal vs Corrected Raw (Top view)")
+            ax.legend()
+            pp.savefig(fig, bbox_inches="tight"); plt.close(fig)
+
+            # Deviation Heatmap
+            if "Deviation" in df.columns:
+                fig, ax = plt.subplots(figsize=(8,6))
+                sc = ax.scatter(df['XPN X'], df['XPN Y'], c=df['Deviation'], cmap="plasma", s=40, edgecolors="k")
+                plt.colorbar(sc, ax=ax, label="Deviation")
+                ax.set_xlabel("X"); ax.set_ylabel("Y")
+                ax.set_title("Deviation Map")
+                pp.savefig(fig, bbox_inches="tight"); plt.close(fig)
+
+            # Histogram
+            if "Deviation" in df.columns:
+                fig, ax = plt.subplots(figsize=(8,6))
+                ax.hist(df['Deviation'], bins=40)
+                ax.set_title("Deviation Distribution")
+                ax.set_xlabel("Deviation"); ax.set_ylabel("Count")
+                pp.savefig(fig, bbox_inches="tight"); plt.close(fig)
+
+        if logger:
+            logger.info(f"Inspection report saved: {output_pdf}")
+        else:
+            print(f"✅ Inspection report saved: {output_pdf}")

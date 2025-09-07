@@ -3,46 +3,28 @@ from tkinter import ttk, messagebox
 from data_reader.xpr_reader import XPRReader
 from data_reader.xpn_reader import XPNReader
 import os
-
-from ui.file_operations import load_xpr_folder, load_xpn_folder, find_file_in_dir
+import pandas as pd
+import logging
+import numpy as np
+from scipy.spatial import distance_matrix
+from ui.file_operations import load_xpr_folder, load_xpn_folder
 from ui.data_processing import compute_report, apply_correction
-from ui.ui_components import display_dataframe, display_combined_plot, display_combined_plot_from_df, save_df_to_pdf
+from ui.ui_components import save_df_to_pdf,generate_cmm_report
 
 class TurbineUI(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Turbine Data Visualizer")
-        self.geometry("1200x800")
+        self.title("Turbine Data Processor")
+        self.geometry("400x200")
 
-        self.xpr_df = None
-        self.xpn_df = None
         self.xpr_folder_path = None
         self.xpn_folder_path = None
         self.base_name = None
+        self.xpr_header = ""
 
-        # Create a canvas and a scrollbar
-        canvas = tk.Canvas(self)
-        scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
-        self.scrollable_frame = ttk.Frame(canvas)
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(
-                scrollregion=canvas.bbox("all")
-            )
-        )
-
-        canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        # Pack everything
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        # --- Content of the scrollable frame ---
-        main_frame = self.scrollable_frame
-
-        # File selection frame
         file_frame = ttk.LabelFrame(main_frame, text="Folder Selection", padding="10")
         file_frame.pack(fill=tk.X, pady=5, padx=10)
 
@@ -56,112 +38,148 @@ class TurbineUI(tk.Tk):
         xpn_button = ttk.Button(file_frame, text="Choose NOM folder", command=lambda: load_xpn_folder(self))
         xpn_button.grid(row=1, column=0, padx=10)
 
-        submit_button = ttk.Button(file_frame, text="Submit", command=self.process_files)
-        submit_button.grid(row=2, column=0, pady=10)
+        submit_button = ttk.Button(main_frame, text="Process Files", command=self.process_files)
+        submit_button.pack(pady=10)
 
-        exit_button = ttk.Button(file_frame, text="Exit", command=self.destroy)
-        exit_button.grid(row=2, column=1, pady=10)
+        exit_button = ttk.Button(main_frame, text="Exit", command=self.exit_app)
+        exit_button.pack(pady=5)
 
-        # Data display and plot frame
-        self.data_plot_frame = ttk.Frame(main_frame)
-        self.data_plot_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
+    def exit_app(self):
+        logging.shutdown()
+        self.destroy()
 
     def process_files(self):
-        if not self.xpr_folder_path:
-            messagebox.showerror("Error", "Please select a RAW folder.")
+        if not self.xpr_folder_path or not self.xpn_folder_path:
+            messagebox.showerror("Error", "Please select both RAW and NOM folders.")
             return
 
-        if not self.xpn_folder_path:
-            messagebox.showerror("Error", "Please select a NOM folder.")
-            return
-
-        xpr_file = find_file_in_dir(self.xpr_folder_path, ".xpr")
-
-        if not xpr_file:
-            messagebox.showerror("Error", "No .xpr file found in the selected RAW folder.")
-            return
-
-        self.base_name = os.path.basename(xpr_file).split('.')[0]
-        xpn_file_name = self.base_name + ".XPN"
-        xpn_file = os.path.join(self.xpn_folder_path, xpn_file_name)
-
-        if not os.path.exists(xpn_file):
-            messagebox.showerror("Error", f"Corresponding .xpn file not found at: {xpn_file}")
-            return
-
-        # Clear previous data
-        for widget in self.data_plot_frame.winfo_children():
-            widget.destroy()
+        os.makedirs("logs", exist_ok=True)
         
-        # Process XPR file
-        reader_xpr = XPRReader(xpr_file)
-        self.xpr_df = reader_xpr.read()
+        xpr_files = [f for f in os.listdir(self.xpr_folder_path) if f.upper().endswith(".XPR")]
 
-        # Process XPN file
-        reader_xpn = XPNReader(xpn_file)
-        self.xpn_df = reader_xpn.read()
+        if not xpr_files:
+            messagebox.showerror("Error", "No .xpr files found in the selected RAW folder.")
+            return
 
-        if self.xpr_df is not None and self.xpn_df is not None:
-            display_combined_plot(self)
+        for xpr_file in xpr_files:
+            self.base_name = os.path.basename(xpr_file).split('.')[0]
             
+            log_file = os.path.join("logs", f"{self.base_name}.log")
+            logger = logging.getLogger(self.base_name)
+            logger.setLevel(logging.INFO)
+            if logger.hasHandlers():
+                logger.handlers.clear()
+            fh = logging.FileHandler(log_file)
+            fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+            logger.addHandler(fh)
+
+            xpr_file_path = os.path.join(self.xpr_folder_path, xpr_file)
+            xpn_file_name = self.base_name + ".XPN"
+            xpn_file_path = os.path.join(self.xpn_folder_path, xpn_file_name)
+
+            if not os.path.exists(xpn_file_path):
+                logger.error(f"Corresponding .xpn file not found at: {xpn_file_path}")
+                continue
+
+            with open(xpr_file_path, 'r') as f:
+                self.xpr_header = "".join([next(f) for _ in range(4)])
+
+            reader_xpr = XPRReader(xpr_file_path)
+            self.xpr_df = reader_xpr.read()
+            reader_xpn = XPNReader(xpn_file_path)
+            self.xpn_df = reader_xpn.read()
+
+            if self.xpr_df is None or self.xpn_df is None:
+                logger.error("Failed to read XPR or XPN files.")
+                continue
+
             self.original_report_df = compute_report(self.xpn_df, self.xpr_df)
             self.current_report_df = self.original_report_df.copy()
             
-            # Display original report
-            display_dataframe(self, self.original_report_df, "Original Deviation Report", 6)
+            reports_dir = "Reports"
+            os.makedirs(reports_dir, exist_ok=True)
+            original_output_path = os.path.join(reports_dir, f"{self.base_name}_original.csv")
+            self.original_report_df.to_csv(original_output_path, index=False)
+            logger.info(f"Original report saved to {original_output_path}")
+            
+            self.handle_autocorrection(self.current_report_df, logger)
+        
+        messagebox.showinfo("Success", "Processing complete. Check logs for details.")
 
-            self.correction_row_counter = 7
+    def handle_autocorrection(self, report_df, logger):
+        if 'Out of spec' in report_df['Remarks'].values:
+            self.current_report_df = apply_correction(self.current_report_df.copy(), logger=logger)
+            
+            reports_dir = "Reports"
+            os.makedirs(reports_dir, exist_ok=True)
+            
+            corrected_csv_path = os.path.join(reports_dir, f"{self.base_name}_corrected.csv")
+            self.current_report_df.to_csv(corrected_csv_path, index=False)
+            logger.info(f"Corrected CSV report saved to {corrected_csv_path}")
+            
+            corrected_pdf_path = os.path.join(reports_dir, f"{self.base_name}_corrected.pdf")
+            save_df_to_pdf(self.current_report_df, corrected_pdf_path)
+            logger.info(f"Corrected PDF report saved to {corrected_pdf_path}")
+            
+            self.write_corrected_xpr(logger)
+        else:
+            logger.info("No 'Out of spec' remarks found. No correction applied.")
 
-            def setup_correction_ui(report_df):
-                if 'Out of spec' in report_df['Remarks'].values:
-                    out_of_spec_count = (report_df['Remarks'] == 'Out of spec').sum()
-                    
-                    correction_frame = ttk.LabelFrame(self.data_plot_frame, text="Apply Correction", padding="10")
-                    correction_frame.grid(row=self.correction_row_counter, column=0, padx=10, pady=5, sticky="nsew")
+    def write_corrected_xpr(self, logger):
+        reports_dir = "Reports"
+        corrected_xpr_path = os.path.join(reports_dir, f"{self.base_name}_Correction.XPR")
+        
+        corrected_xpr_df = self.current_report_df[['Point# (XPN)', 'XPR X', 'XPR Y', 'XPR Z', 'I', 'J', 'K']].copy()
+        features = self.compute_geometric_features(corrected_xpr_df)
+        generate_cmm_report(corrected_xpr_df, features,  os.path.join(reports_dir, f"{self.base_name}_CMM_Report.pdf"), logger=logger)
+        corrected_xpr_df.columns = ['Point#', 'X', 'Y', 'Z', 'I', 'J', 'K']
+        
+        with open(corrected_xpr_path, 'w') as f:
+            f.write(self.xpr_header)
+            corrected_xpr_df.to_csv(f, sep=' ', header=False, index=False, lineterminator='\n')
+        logger.info(f"Corrected XPR file saved to {corrected_xpr_path}")
 
-                    count_label = ttk.Label(correction_frame, text=f"Out of spec count: {out_of_spec_count}")
-                    count_label.pack(anchor='ne')
+    
 
-                    autocorrect_var = tk.BooleanVar()
-                    autocorrect_check = ttk.Checkbutton(correction_frame, text="Autocorrection", variable=autocorrect_var)
-                    autocorrect_check.pack(side=tk.LEFT, padx=5)
+    def compute_geometric_features(self, df):
+        points = df[[ "X", "Y", "Z" ]].to_numpy()
 
-                    def apply_and_redisplay():
-                        if not autocorrect_var.get():
-                            messagebox.showinfo("Info", "Please check the 'Autocorrection' box to apply the correction.")
-                            return
+        # Chord length (X max - X min)
+        chord_length = np.max(points[:, 0]) - np.min(points[:, 0])
 
-                        self.current_report_df = apply_correction(self.current_report_df.copy())
-                        
-                        # Save the corrected report
-                        reports_dir = "data/Reports"
-                        os.makedirs(reports_dir, exist_ok=True)
-                        output_path = os.path.join(reports_dir, f"{self.base_name}.csv")
-                        self.current_report_df.to_csv(output_path, index=False)
-                        
-                        pdf_output_path = os.path.join(reports_dir, f"{self.base_name}.pdf")
-                        save_df_to_pdf(self.current_report_df, pdf_output_path)
-                        
-                        plot_output_path = os.path.join(reports_dir, f"{self.base_name}_plot.pdf")
-                        
-                        messagebox.showinfo("Success", f"Corrected report saved to {output_path}, {pdf_output_path} and {plot_output_path}")
+        # Leading and trailing edge positions
+        leading_edge = np.min(points[:, 0])
+        trailing_edge = np.max(points[:, 0])
 
-                        # Destroy the current correction UI
-                        correction_frame.destroy()
-                        
-                        # Display the new corrected report
-                        display_dataframe(self, self.current_report_df, f"Corrected Report", self.correction_row_counter)
-                        self.correction_row_counter += 1
-                        display_combined_plot_from_df(self, self.current_report_df, "Corrected Combined Plot", self.correction_row_counter, pdf_path=plot_output_path)
-                        self.correction_row_counter += 1
-                        
-                        # Setup the next correction UI
-                        setup_correction_ui(self.current_report_df)
+        # Thickness at mid-chord (approximate)
+        mid_chord = (leading_edge + trailing_edge) / 2
+        mid_section = df[np.isclose(df["X"], mid_chord, atol=0.5)]
+        thickness = np.max(mid_section["Y"]) - np.min(mid_section["Y"]) if not mid_section.empty else np.nan
 
-                    correction_button = ttk.Button(correction_frame, text="Apply", command=apply_and_redisplay)
-                    correction_button.pack(side=tk.LEFT, padx=5)
+        # Alignment (mean offset from origin)
+        x_align = np.mean(points[:, 0])
+        y_align = np.mean(points[:, 1])
+        rot_align = np.degrees(np.arctan2(np.mean(df["J"]), np.mean(df["I"])))
 
-            setup_correction_ui(self.current_report_df)
+        # Profile deviation (simulated nominal = rolling mean)
+        nominal = pd.DataFrame(points).rolling(window=5, center=True).mean().dropna().to_numpy()
+        deviation = np.min(distance_matrix(nominal, points), axis=1)
+        rms_error = np.sqrt(np.mean(deviation**2))
+        max_error = np.max(deviation)
+        min_error = np.min(deviation)
+
+        return {
+            "Chord Length": chord_length,
+            "Leading Edge": leading_edge,
+            "Trailing Edge": trailing_edge,
+            "Max Thickness": thickness,
+            "X Alignment": x_align,
+            "Y Alignment": y_align,
+            "Rotation Alignment": rot_align,
+            "RMS Error": rms_error,
+            "Max Profile Error": max_error,
+            "Min Profile Error": min_error
+        }    
 
 if __name__ == "__main__":
     app = TurbineUI()
