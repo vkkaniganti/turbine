@@ -8,5 +8,6 @@ build/
 node_modules/
 .env
 Reports/
+./Reports/*
 logs/
 _pycache__/

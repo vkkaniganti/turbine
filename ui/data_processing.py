@@ -26,7 +26,7 @@ def compute_report(xpn_df_raw, xpr_df_raw):
     matched_xpr_coords = xpr_df.iloc[closest_xpr_indices][['X', 'Y', 'Z']].to_numpy()
     matched_xpr_normals = xpr_df.iloc[closest_xpr_indices][['I', 'J', 'K']].to_numpy()
 
-    # Calculate corrected coordinates
+    # # Calculate corrected coordinates
     corrected_coords = np.zeros_like(xpn_coords)
     for i in range(len(xpn_coords)):
         dev = min_deviations[i]
@@ -39,6 +39,7 @@ def compute_report(xpn_df_raw, xpr_df_raw):
             corrected_coords[i] = xpn_p + direction_vector * htol
         else:
             corrected_coords[i] = xpr_p
+          
             
     # Calculate the magnitude of the correction
     correction_magnitudes = np.linalg.norm(corrected_coords - matched_xpr_coords, axis=1)
@@ -118,6 +119,7 @@ def correct_deviation_batch(xpn_coords, xpr_coords, htol_array):
 def apply_correction(report_df, logger=None):
     corrected_df = report_df.copy()
     out_of_spec_df = corrected_df[corrected_df['Remarks'] == 'Out of spec']
+    out_of_spec_df = report_df.copy()
     
     if out_of_spec_df.empty:
         return corrected_df.round(3)
@@ -144,7 +146,7 @@ def apply_correction(report_df, logger=None):
 
     # Update the dataframe
     corrected_df.loc[out_of_spec_df.index, ['XPR X', 'XPR Y', 'XPR Z']] = new_xpr_coords
-    corrected_df.loc[out_of_spec_df.index, 'Deviation'] = htol_array
+    corrected_df.loc[out_of_spec_df.index, 'Deviation'] = final_deviation
     corrected_df.loc[out_of_spec_df.index, 'Correction_Magnitude'] = correction_magnitude
     corrected_df.loc[out_of_spec_df.index, 'Remarks'] = remarks
     corrected_df['Error'] = corrected_df['Deviation'] - corrected_df['HTol']

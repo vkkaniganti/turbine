@@ -6,6 +6,13 @@ import pandas as pd
 from matplotlib.backends.backend_pdf import PdfPages
 import datetime
 import numpy as np
+from utils.cmm_calculations import compute_max_thickness,compute_chord_length,compute_le_thickness,compute_te_thickness,compute_axis_alignment
+from scipy.spatial import distance_matrix
+
+def format_value(value, precision=3):
+    if isinstance(value, (int, float)):
+        return f"{value:.{precision}f}"
+    return "N/A"
 
 def display_dataframe(app, df, title, row):
     frame = ttk.LabelFrame(app.data_plot_frame, text=title, padding="10")
@@ -74,53 +81,6 @@ def display_scatter_plot(app, df, title, row, x_key, y_key):
 
     update_plot()
 
-def display_combined_plot(app):
-    frame = ttk.LabelFrame(app.data_plot_frame, text="Combined Scatter Plot", padding="10")
-    frame.grid(row=5, column=0, padx=10, pady=5, sticky="nsew")
-
-    xpr_df_copy = app.xpr_df.copy()
-    xpr_df_copy['source'] = 'Actual'
-    xpn_df_copy = app.xpn_df.copy()
-    xpn_df_copy['source'] = 'Original'
-
-    combined_df = pd.concat([xpr_df_copy, xpn_df_copy], ignore_index=True)
-
-    fig, ax = plt.subplots(figsize=(5, 4))
-    canvas = FigureCanvasTkAgg(fig, master=frame)
-    canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-
-    if len(combined_df.columns) < 2:
-        ttk.Label(frame, text="Data does not have enough columns for a scatter plot.").pack()
-        return
-
-    x_axis_var = tk.StringVar(value=combined_df.columns[1])
-    y_axis_var = tk.StringVar(value=combined_df.columns[2])
-
-    def update_plot(*args):
-        ax.clear()
-        colors = {'Actual': 'r', 'Original': 'b'}
-        ax.scatter(combined_df[x_axis_var.get()], combined_df[y_axis_var.get()], c=combined_df['source'].map(colors))
-        ax.set_xlabel(x_axis_var.get())
-        ax.set_ylabel(y_axis_var.get())
-        ax.set_title("Combined Scatter Plot")
-        canvas.draw()
-
-    controls_frame = ttk.Frame(frame)
-    controls_frame.pack(fill=tk.X)
-
-    ttk.Label(controls_frame, text="X-axis:").pack(side=tk.LEFT, padx=5)
-    x_axis_menu = ttk.Combobox(controls_frame, textvariable=x_axis_var, values=list(combined_df.columns))
-    x_axis_menu.pack(side=tk.LEFT, padx=5)
-
-    ttk.Label(controls_frame, text="Y-axis:").pack(side=tk.LEFT, padx=5)
-    y_axis_menu = ttk.Combobox(controls_frame, textvariable=y_axis_var, values=list(combined_df.columns))
-    y_axis_menu.pack(side=tk.LEFT, padx=5)
-
-    x_axis_var.trace("w", update_plot)
-    y_axis_var.trace("w", update_plot)
-
-    update_plot()
-
 def display_combined_plot_from_df(app, df, title, row, pdf_path=None):
     frame = ttk.LabelFrame(app.data_plot_frame, text=title, padding="10")
     frame.grid(row=row, column=0, padx=10, pady=5, sticky="nsew")
@@ -163,7 +123,28 @@ def save_df_to_pdf(df, path, title="Data Report"):
         fig, ax = plt.subplots(figsize=(12, 4))
         ax.axis('tight')
         ax.axis('off')
-        the_table = ax.table(cellText=df.values, colLabels=df.columns, loc='center')
+
+        # Prepare column widths
+        num_columns = len(df.columns)
+        if num_columns > 0:
+            # Set last column to be wider, e.g., 15% of table width
+            width_last_col = 0.15
+            
+            if num_columns > 1:
+                # Distribute the rest of the width among other columns
+                width_other_cols = (1.0 - width_last_col) / (num_columns - 1)
+                col_widths = [width_other_cols] * (num_columns - 1) + [width_last_col]
+            else:
+                # If only one column, it takes up the full width
+                col_widths = [1.0]
+            
+            the_table = ax.table(cellText=df.values, colLabels=df.columns, loc='center', colWidths=col_widths)
+            if num_columns > 1:
+                the_table.auto_set_column_width(col=list(range(num_columns - 1)))
+        else:
+            # Fallback for empty dataframe
+            the_table = ax.table(cellText=df.values, colLabels=df.columns, loc='center')
+        
         the_table.auto_set_font_size(False)
         the_table.set_fontsize(8)
         the_table.scale(1.2, 1.2)
@@ -175,8 +156,8 @@ def save_df_to_pdf(df, path, title="Data Report"):
         # --- Page 2: Scatter Plot (Nominal vs Raw) ---
         fig, ax = plt.subplots(figsize=(6, 5))
 
-        ax.scatter(df['XPN X'], df['XPN Y'], c='b', label='XPN - Nominal Data')
-        ax.scatter(df['XPR X'], df['XPR Y'], c='r', label='XPR - Raw Data')
+        ax.scatter(df['Original X'], df['Original Y'], c='b', label='XPN - Nominal Data')
+        ax.scatter(df['Actual X'], df['Actual Y'], c='r', label='XPR - Raw Data')
 
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
@@ -189,7 +170,7 @@ def save_df_to_pdf(df, path, title="Data Report"):
         # --- Page 3: Deviation heatmap scatter ---
         if "Deviation" in df.columns:
             fig, ax = plt.subplots(figsize=(6, 5))
-            sc = ax.scatter(df['XPN X'], df['XPN Y'], c=df['Deviation'],
+            sc = ax.scatter(df['Original X'], df['Original Y'], c=df['Deviation'],
                             cmap='viridis', s=40, edgecolors='k')
 
             ax.set_xlabel("X")
@@ -203,75 +184,233 @@ def save_df_to_pdf(df, path, title="Data Report"):
             pp.savefig(fig, bbox_inches='tight')
             plt.close(fig)
 
+def get_diff_error(nominal, actual):
+    if isinstance(nominal, (int, float)) and isinstance(actual, (int, float)):
+        diff = actual - nominal
+        error = abs(diff)
+        return f"{diff:.3f}", f"{error:.3f}"
+    return "N/A", "N/A"
 
-    def generate_cmm_report(df, features, output_pdf, logger=None):
-        with PdfPages(output_pdf) as pp:
-            # Page 1: Cover & Summary
-            fig, ax = plt.subplots(figsize=(11.69, 8.27))  # A4 landscape
-            ax.axis("off")
-            ax.text(0.5, 0.9, "CMM INSPECTION REPORT", ha="center", fontsize=20, weight="bold")
+def compute_geometric_features(report_df):
+    actual_df = report_df[['XPR X', 'XPR Y', 'XPR Z', 'I', 'J', 'K']].copy()
+    actual_df.columns = ['X', 'Y', 'Z', 'I', 'J', 'K']
+    nominal_df = report_df[['XPN X', 'XPN Y', 'XPN Z']].copy()
+    nominal_df.columns = ['X', 'Y', 'Z']
 
-            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            ax.text(0.5, 0.85, f"Generated: {now}", ha="center", fontsize=10)
+    points_xpn = report_df[['XPN X', 'XPN Y']].to_numpy()
+    points_xpr = report_df[['XPR X', 'XPR Y']].to_numpy()
 
-            # Placeholders for customer info
-            ax.text(0.05, 0.78, "Customer: ____________________", fontsize=11)
-            ax.text(0.05, 0.74, "Project: _____________________", fontsize=11)
-            ax.text(0.05, 0.70, "Drawing No: _________________", fontsize=11)
-            ax.text(0.05, 0.66, "Report No: __________________", fontsize=11)
+    #MAX. THICK - Cmax
+    nominal_max_thickness = list(compute_max_thickness(points_xpn, section="N1").values())[0]
+    actual_max_thickness = list(compute_max_thickness(points_xpr, section="N1").values())[0]
 
-            # Features
-            y = 0.58
-            ax.text(0.05, y, "Geometric Features:", fontsize=12, weight="bold")
-            for k, v in features.items():
-                y -= 0.04
-                ax.text(0.07, y, f"{k}: {v:.4f}" if isinstance(v, (int, float, np.floating)) else f"{k}: {v}", fontsize=10)
+    # Chord length (X max - X min)
+    actual_chord_length = actual_df['X'].max() - actual_df['X'].min()
+    nominal_chord_length = nominal_df['X'].max() - nominal_df['X'].min()
 
-            pp.savefig(fig, bbox_inches="tight")
-            plt.close(fig)
 
-            # Page 2+: Data table
-            df_print = df.round(4)
-            max_rows = 35
-            for start in range(0, len(df_print), max_rows):
-                subset = df_print.iloc[start:start+max_rows]
-                fig, ax = plt.subplots(figsize=(11.69, 8.27))
-                ax.axis("off")
-                table = ax.table(cellText=subset.values, colLabels=subset.columns, loc="center")
-                table.auto_set_font_size(False)
-                table.set_fontsize(8)
-                table.scale(1.1, 1.2)
-                ax.set_title(f"Corrected Data Rows {start+1}-{min(start+max_rows, len(df_print))}", fontsize=11)
-                pp.savefig(fig, bbox_inches="tight")
-                plt.close(fig)
+    #LE CHORD LENGTH -B1
+    nominal_le_chord_length_b1 = list(compute_chord_length(points_xpn, section="B1").values())[0]
+    actual_le_chord_length_b1 = list(compute_chord_length(points_xpr, section="B1").values())[0]
 
-            # Scatter Plot (Nominal vs Raw)
-            fig, ax = plt.subplots(figsize=(8,6))
-            ax.scatter(df['XPN X'], df['XPN Y'], c='blue', label="XPN - Nominal Data")
-            ax.scatter(df['XPR X'], df['XPR Y'], c='red', label="XPR - Corrected Raw Data")
-            ax.set_xlabel("X"); ax.set_ylabel("Y")
-            ax.set_title("Nominal vs Corrected Raw (Top view)")
-            ax.legend()
-            pp.savefig(fig, bbox_inches="tight"); plt.close(fig)
+    #TE CHORD LENGTH -B2
+    nominal_te_chord_length_b2 = list(compute_chord_length(points_xpn, section="B2").values())[0]
+    actual_te_chord_length_b2 = list(compute_chord_length(points_xpr, section="B2").values())[0]
+    
+    #LE THICKNESS- N1 @ 2 mm_C1
+    nominal_le_thickness_C1 = list(compute_le_thickness(points_xpn, section="N1", offset_mm=2.0, tol=0.3).values())[0]
+    actual_le_thickness_C1 = list(compute_le_thickness(points_xpr, section="N1", offset_mm=2.0, tol=0.3).values())[0]
+    
+    #TE THICKNESS- N1 @ 2 mm_C3
+    nominal_te_thickness_C3 = list(compute_te_thickness(points_xpn, section="N1", offset_mm= (nominal_chord_length - 2.0), tol=0.3).values())[0]
+    actual_te_thickness_C3 = list(compute_te_thickness(points_xpr, section="N1", offset_mm= (actual_chord_length - 2.0), tol=0.3).values())[0]
 
-            # Deviation Heatmap
-            if "Deviation" in df.columns:
-                fig, ax = plt.subplots(figsize=(8,6))
-                sc = ax.scatter(df['XPN X'], df['XPN Y'], c=df['Deviation'], cmap="plasma", s=40, edgecolors="k")
-                plt.colorbar(sc, ax=ax, label="Deviation")
-                ax.set_xlabel("X"); ax.set_ylabel("Y")
-                ax.set_title("Deviation Map")
-                pp.savefig(fig, bbox_inches="tight"); plt.close(fig)
+    # X AXIS ALIGNMENT, Y AXIS ALIGNMENT
+    alignment = compute_axis_alignment(points_xpn, points_xpr, section="N1")
+    x_align = alignment[f"X AXIS ALIGNMENT - N1"]
+    y_align = alignment[f"Y AXIS ALIGNMENT - N1"]
 
-            # Histogram
-            if "Deviation" in df.columns:
-                fig, ax = plt.subplots(figsize=(8,6))
-                ax.hist(df['Deviation'], bins=40)
-                ax.set_title("Deviation Distribution")
-                ax.set_xlabel("Deviation"); ax.set_ylabel("Count")
-                pp.savefig(fig, bbox_inches="tight"); plt.close(fig)
+    rot_align = np.degrees(np.arctan2(np.mean(actual_df["J"]), np.mean(actual_df["I"])))
 
-        if logger:
-            logger.info(f"Inspection report saved: {output_pdf}")
-        else:
-            print(f"✅ Inspection report saved: {output_pdf}")
+    # Profile deviation from the main report
+    max_deviation = report_df['Deviation'].max()
+    min_deviation = report_df['Deviation'].min()
+    max_dev_point_no = report_df.loc[report_df['Deviation'].idxmax(), 'Point# (XPN)']
+    min_dev_point_no = report_df.loc[report_df['Deviation'].idxmin(), 'Point# (XPN)']
+
+    return {
+        "MAX. THICK - Cmax actual": actual_max_thickness,
+        "MAX. THICK - Cmax nominal": nominal_max_thickness,
+        "Chord Length Nominal": nominal_chord_length,
+        "Chord Length Actual": actual_chord_length,
+        "LE Chord Length B1 Nominal": nominal_le_chord_length_b1,
+        "LE Chord Length B1 Actual": actual_le_chord_length_b1,
+        "TE Chord Length B2 Nominal": nominal_te_chord_length_b2,
+        "TE Chord Length B2 Actual": actual_te_chord_length_b2,
+        "LE Thickness Nominal": nominal_le_thickness_C1,
+        "LE Thickness Actual": actual_le_thickness_C1,
+        "TE Thickness Nominal": nominal_te_thickness_C3,
+        "TE Thickness Actual": actual_te_thickness_C3,
+        "X Alignment": x_align,
+        "Y Alignment": y_align,
+        "Rotation Alignment": rot_align,
+        "Max Profile Error": max_deviation,
+        "Min Profile Error": min_deviation,
+        "Max Profile Error Point No": max_dev_point_no,
+        "Min Profile Error Point No": min_dev_point_no,
+        "TETA": rot_align
+    }
+
+def generate_cmm_report(report_df, output_pdf, base_name, logger=None):
+    features = compute_geometric_features(report_df)
+    with PdfPages(output_pdf) as pp:
+        fig, ax = plt.subplots(figsize=(16, 9))
+        ax.axis("off")
+
+        # ---------------- HEADER ----------------
+        ax.text(0.01, 0.95, "[ENNEM EXCEL LOGO]", ha="left", fontsize=10)
+        ax.text(0.5, 0.95, "ENNEM EXCEL ENGINEERING PRIVATE LIMITED",
+                ha="center", fontsize=14, weight="bold")
+        ax.text(0.5, 0.92, "E-7 & D-6, INDUSTRIAL ESTATE, PATANCHERU-502319", ha="center", fontsize=10)
+        ax.text(0.5, 0.89, "SANGA REDDY DIST., TELANGANA STATE", ha="center", fontsize=10)
+        ax.text(0.99, 0.95, "[Nikon LOGO]", ha="right", fontsize=10)
+
+        # ---------------- TITLE ----------------
+        ax.text(0.5, 0.82, "CMM INSPECTION REPORT", ha="center", fontsize=16, weight="bold")
+
+        # ---------------- METADATA TABLE ----------------
+        meta_top = [
+            ["DRAWING NO", "", "REPORT NO", ""],
+            ["DESCRIPITION", "", "DATE", ""],
+            ["STAGE", "", "BLADE NO", ""]
+        ]
+        meta_bottom = [
+            ["CUSTOMER NAME", ""],
+            ["P.O NO/DC NO.", ""],
+            ["PROJECT", ""]
+        ]
+
+        # Top metadata table
+        meta_table_top = ax.table(
+            cellText=meta_top,
+            loc='center',
+            cellLoc='left',
+            bbox=[0.05, 0.70, 0.9, 0.10]
+        )
+        meta_table_top.auto_set_font_size(False)
+        meta_table_top.set_fontsize(9)
+        for row in range(len(meta_top)):
+            for col in range(4):
+                cell = meta_table_top[(row, col)]
+                cell.set_linewidth(0.8)
+                if col % 2 == 0:
+                    cell.set_text_props(weight="bold")
+                    cell.set_width(0.20)
+                else:
+                    cell.set_width(0.25)
+
+        # Bottom metadata table
+        meta_table_bottom = ax.table(
+            cellText=meta_bottom,
+            loc='center',
+            cellLoc='left',
+            bbox=[0.05, 0.62, 0.9, 0.06]
+        )
+        meta_table_bottom.auto_set_font_size(False)
+        meta_table_bottom.set_fontsize(9)
+        for row in range(len(meta_bottom)):
+            for col in range(2):
+                cell = meta_table_bottom[(row, col)]
+                cell.set_linewidth(0.8)
+                if col == 0:
+                    cell.set_text_props(weight="bold")
+                    cell.set_width(0.36)
+                else:
+                    cell.set_width(0.54)
+
+        # ---------------- SECTION TITLE ----------------
+        ax.text(0.5, 0.58, f"160.AEROFOIL SECTION # {base_name} @ 209mm",
+                ha="center", fontsize=12, weight="bold")
+
+        # ---------------- MAIN DATA TABLE ----------------
+        col_labels = [
+            'Sl.No', 'DESCRIPITION', 'NOMINAL', 'ACTUAL',
+            'HIGH-TOL', 'LOW-TOL', 'DIFFERENCE', 'ERROR', 'REMARKS'
+        ]
+
+        # Sl.No and Description content from template (PDF)
+        slno_values = [
+            "114&193", "178", "168", "167", "176&195", "180&189", "68", "69", "",
+            "107", "", "107", "", "166"
+        ]
+        desc_values = [
+            "MAX. THICK - Cmax", "CHORD LENGTH - B", "LE  CHORD LENGTH -B1", "TE  CHORD LENGTH -B2",
+            "LE THICKNESS- N1 @ 2 mm_C1", "TE THICKNESS- N1 @ 2 mm_C3", "X  AXIS ALIGNMENT",
+            "Y  AXIS ALIGNMENT", "ROTATION AXIS ALIGNMENT - DEG",
+            "PROF. FORM  MAX", "PROF. FORM  MAX OCCURS POINT NO.",
+            "PROF. FORM  MIN", "PROF. FORM  MIN OCCURS POINT NO.",
+            "TETA"
+        ]
+
+        nrows = len(slno_values)
+        ncols = len(col_labels)
+
+        # Fill only Sl.No + Description, keep others blank
+        table_data = []
+        for i in range(nrows):
+            row_data = [""] * ncols
+            row_data[0] = slno_values[i]
+            row_data[1] = desc_values[i]
+            table_data.append(row_data)
+
+        main_table = ax.table(
+            cellText=table_data,
+            colLabels=col_labels,
+            loc='center',
+            cellLoc='center',
+            bbox=[0.05, 0.05, 0.9, 0.5]
+        )
+        main_table.auto_set_font_size(False)
+        main_table.set_fontsize(8)
+
+        # Adjust column widths (Sl.No narrow, Description wide, others equal)
+        total_width = 0.9
+        slno_w = 0.07   # 7% width
+        desc_w = 0.23   # 23% width
+        other_w = (total_width - slno_w - desc_w) / (ncols - 2)
+
+        for col in range(ncols):
+            for row in range(nrows + 1):  # +1 header
+                cell = main_table[(row, col)]
+                cell.set_linewidth(0.8)
+                if col == 0:
+                    cell.set_width(slno_w)
+                elif col == 1:
+                    cell.set_width(desc_w)
+                    cell.set_text_props(ha="left")  # left-align descriptions
+                else:
+                    cell.set_width(other_w)
+
+                # Header row styling
+                if row == 0:
+                    cell.set_text_props(weight="bold", color="white")
+                    cell.set_facecolor("#4F81BD")
+                else:
+                    if row % 2 == 0:
+                        cell.set_facecolor("#F2F2F2")
+                    else:
+                        cell.set_facecolor("white")
+
+        # ---------------- FOOTER ----------------
+        ax.text(0.1, 0.02, "Inspected by:", ha="left", fontsize=10)
+        ax.text(0.5, 0.02, "Reviewed by:", ha="center", fontsize=10)
+        ax.text(0.9, 0.02, "Reviewed/Witnessed by:", ha="right", fontsize=10)
+
+        # ---------------- SAVE ----------------
+        pp.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+    if logger:
+        logger.info(f"Inspection report saved: {output_pdf}")
+    else:
+        print(f"✅ Inspection report saved: {output_pydf}")

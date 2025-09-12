@@ -11,6 +11,17 @@ from ui.file_operations import load_xpr_folder, load_xpn_folder
 from ui.data_processing import compute_report, apply_correction
 from ui.ui_components import save_df_to_pdf,generate_cmm_report
 
+def calculate_thickness_at(df, x_coord):
+    points_around = df[np.isclose(df['X'], x_coord, atol=0.1)]
+    if len(points_around) < 2:
+        return np.nan
+    
+    y_values = points_around['Y'].values
+    if len(y_values) < 2:
+        return np.nan
+        
+    return np.max(y_values) - np.min(y_values)
+
 class TurbineUI(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -69,7 +80,7 @@ class TurbineUI(tk.Tk):
             logger.setLevel(logging.INFO)
             if logger.hasHandlers():
                 logger.handlers.clear()
-            fh = logging.FileHandler(log_file)
+            fh = logging.FileHandler(log_file, mode='w')
             fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
             logger.addHandler(fh)
 
@@ -99,7 +110,7 @@ class TurbineUI(tk.Tk):
             reports_dir = "Reports"
             os.makedirs(reports_dir, exist_ok=True)
             original_output_path = os.path.join(reports_dir, f"{self.base_name}_original.csv")
-            self.original_report_df.to_csv(original_output_path, index=False)
+            self.original_report_df.rename(columns={'Point# (XPN)': 'Point#', 'XPN X': 'Original X', 'XPN Y': 'Original Y', 'XPN Z': 'Original Z', 'XPR X': 'Actual X', 'XPR Y': 'Actual Y', 'XPR Z': 'Actual Z'}).to_csv(original_output_path, index=False)
             logger.info(f"Original report saved to {original_output_path}")
             
             self.handle_autocorrection(self.current_report_df, logger)
@@ -114,11 +125,12 @@ class TurbineUI(tk.Tk):
             os.makedirs(reports_dir, exist_ok=True)
             
             corrected_csv_path = os.path.join(reports_dir, f"{self.base_name}_corrected.csv")
-            self.current_report_df.to_csv(corrected_csv_path, index=False)
+            renamed_df = self.current_report_df.rename(columns={'Point# (XPN)': 'Point#', 'XPN X': 'Original X', 'XPN Y': 'Original Y', 'XPN Z': 'Original Z', 'XPR X': 'Actual X', 'XPR Y': 'Actual Y', 'XPR Z': 'Actual Z'})
+            renamed_df.to_csv(corrected_csv_path, index=False)
             logger.info(f"Corrected CSV report saved to {corrected_csv_path}")
             
             corrected_pdf_path = os.path.join(reports_dir, f"{self.base_name}_corrected.pdf")
-            save_df_to_pdf(self.current_report_df, corrected_pdf_path)
+            save_df_to_pdf(renamed_df.drop(columns=['I', 'J', 'K']), corrected_pdf_path)
             logger.info(f"Corrected PDF report saved to {corrected_pdf_path}")
             
             self.write_corrected_xpr(logger)
@@ -129,11 +141,11 @@ class TurbineUI(tk.Tk):
         reports_dir = "Reports"
         corrected_xpr_path = os.path.join(reports_dir, f"{self.base_name}_Correction.XPR")
         
+     
+        # generate_cmm_report(self.current_report_df,  os.path.join(reports_dir, f"{self.base_name}_CMM_Report.pdf"), self.base_name, logger=logger)
+
         corrected_xpr_df = self.current_report_df[['Point# (XPN)', 'XPR X', 'XPR Y', 'XPR Z', 'I', 'J', 'K']].copy()
-        features = self.compute_geometric_features(corrected_xpr_df)
-        generate_cmm_report(corrected_xpr_df, features,  os.path.join(reports_dir, f"{self.base_name}_CMM_Report.pdf"), logger=logger)
         corrected_xpr_df.columns = ['Point#', 'X', 'Y', 'Z', 'I', 'J', 'K']
-        
         with open(corrected_xpr_path, 'w') as f:
             f.write(self.xpr_header)
             corrected_xpr_df.to_csv(f, sep=' ', header=False, index=False, lineterminator='\n')
@@ -141,45 +153,7 @@ class TurbineUI(tk.Tk):
 
     
 
-    def compute_geometric_features(self, df):
-        points = df[[ "X", "Y", "Z" ]].to_numpy()
-
-        # Chord length (X max - X min)
-        chord_length = np.max(points[:, 0]) - np.min(points[:, 0])
-
-        # Leading and trailing edge positions
-        leading_edge = np.min(points[:, 0])
-        trailing_edge = np.max(points[:, 0])
-
-        # Thickness at mid-chord (approximate)
-        mid_chord = (leading_edge + trailing_edge) / 2
-        mid_section = df[np.isclose(df["X"], mid_chord, atol=0.5)]
-        thickness = np.max(mid_section["Y"]) - np.min(mid_section["Y"]) if not mid_section.empty else np.nan
-
-        # Alignment (mean offset from origin)
-        x_align = np.mean(points[:, 0])
-        y_align = np.mean(points[:, 1])
-        rot_align = np.degrees(np.arctan2(np.mean(df["J"]), np.mean(df["I"])))
-
-        # Profile deviation (simulated nominal = rolling mean)
-        nominal = pd.DataFrame(points).rolling(window=5, center=True).mean().dropna().to_numpy()
-        deviation = np.min(distance_matrix(nominal, points), axis=1)
-        rms_error = np.sqrt(np.mean(deviation**2))
-        max_error = np.max(deviation)
-        min_error = np.min(deviation)
-
-        return {
-            "Chord Length": chord_length,
-            "Leading Edge": leading_edge,
-            "Trailing Edge": trailing_edge,
-            "Max Thickness": thickness,
-            "X Alignment": x_align,
-            "Y Alignment": y_align,
-            "Rotation Alignment": rot_align,
-            "RMS Error": rms_error,
-            "Max Profile Error": max_error,
-            "Min Profile Error": min_error
-        }    
+    
 
 if __name__ == "__main__":
     app = TurbineUI()

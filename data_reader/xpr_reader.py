@@ -55,4 +55,4 @@ class XPRReader(BaseReader):
 
         # Create DataFrame
         df = pd.DataFrame(data, columns=["Point#", "X", "Y", "Z", "I", "J", "K"])
-        return df
+        return df.round(3)
