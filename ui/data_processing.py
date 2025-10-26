@@ -28,16 +28,34 @@ def compute_report(xpn_df_raw, xpr_df_raw):
 
     # # Calculate corrected coordinates
     corrected_coords = np.zeros_like(xpn_coords)
+    # for i in range(len(xpn_coords)):
+    #     dev = min_deviations[i]
+    #     htol = xpn_df.loc[xpn_df.index[i], 'HTol']
+    #     ltol = xpn_df.loc[xpn_df.index[i], 'LTol']
+    #     xpn_p = xpn_coords[i]
+    #     xpr_p = matched_xpr_coords[i]
+
+    #     if dev > htol and dev > 0:
+    #         direction_vector = (xpr_p - xpn_p) / dev
+    #         corrected_coords[i] = xpn_p + direction_vector * htol
+    #     else:
+    #         corrected_coords[i] = xpr_p
     for i in range(len(xpn_coords)):
         dev = min_deviations[i]
         htol = xpn_df.loc[xpn_df.index[i], 'HTol']
+        ltol = xpn_df.loc[xpn_df.index[i], 'LTol']
         xpn_p = xpn_coords[i]
         xpr_p = matched_xpr_coords[i]
 
-        if dev > htol and dev > 0:
+        if dev > htol:  # too high
             direction_vector = (xpr_p - xpn_p) / dev
             corrected_coords[i] = xpn_p + direction_vector * htol
-        else:
+
+        elif dev < -ltol:  # too low
+            direction_vector = (xpr_p - xpn_p) / dev
+            corrected_coords[i] = xpn_p + direction_vector * (-ltol)
+
+        else:  # within tolerance
             corrected_coords[i] = xpr_p
           
             
@@ -77,42 +95,97 @@ def compute_report(xpn_df_raw, xpr_df_raw):
     
     return final_report_df
 
-def correct_deviation_batch(xpn_coords, xpr_coords, htol_array):
+# def correct_deviation_batch(xpn_coords, xpr_coords, htol_array):
+#     """
+#     Vectorized correction for all points.
+#     Moves raw (XPR) points toward nominal (XPN) until within tolerance.
+#     """
+#     # Compute initial deviations
+#     deltas = xpn_coords - xpr_coords
+#     deviations = np.linalg.norm(deltas, axis=1)
+
+#     # Mask: points already within tolerance
+#     within_tol = deviations <= htol_array
+
+#     # Normalize direction vectors safely (avoid division by zero)
+#     direction_vectors = np.zeros_like(deltas)
+#     nonzero_mask = deviations > 0
+#     direction_vectors[nonzero_mask] = deltas[nonzero_mask] / deviations[nonzero_mask, None]
+
+#     # Distances to move = deviation - tolerance (only for out-of-spec points)
+#     random_factor = np.random.uniform(0.8, 0.95, size=htol_array.shape)
+#     correction_distances = np.maximum(deviations - (htol_array * random_factor), 0)
+
+#     # Apply correction
+#     corrected_xpr = xpr_coords + direction_vectors * correction_distances[:, None]
+
+#     # Final deviation after correction
+#     final_deviation = np.linalg.norm(xpn_coords - corrected_xpr, axis=1)
+
+#     # Actual correction magnitudes
+#     correction_magnitude = np.linalg.norm(corrected_xpr - xpr_coords, axis=1)
+
+#     # Remarks
+#     eps = 1e-6  # small margin for floating point errors
+#     remarks = np.where(final_deviation <= htol_array + eps,
+#                 "Within tolerance", "Out of spec")
+
+
+#     # remarks = np.where(final_deviation <= htol_array, "Within tolerance", "Out of spec")
+
+#     return corrected_xpr, final_deviation, correction_magnitude, remarks
+import numpy as np
+
+def correct_deviation_batch(xpn_coords, xpr_coords, htol_array, ltol_array):
     """
     Vectorized correction for all points.
-    Moves raw (XPR) points toward nominal (XPN) until within tolerance.
+    Moves raw (XPR) points toward nominal (XPN) until within +/- tolerance.
+    
+    Parameters
+    ----------
+    xpn_coords : np.ndarray
+        Nominal coordinates (N, d)
+    xpr_coords : np.ndarray
+        Actual coordinates (N, d)
+    htol_array : np.ndarray
+        Upper tolerances (N,)
+    ltol_array : np.ndarray
+        Lower tolerances (N,)
     """
-    # Compute initial deviations
-    deltas = xpn_coords - xpr_coords
+    # Compute raw deltas and deviations
+    deltas = xpr_coords - xpn_coords
     deviations = np.linalg.norm(deltas, axis=1)
 
-    # Mask: points already within tolerance
-    within_tol = deviations <= htol_array
-
-    # Normalize direction vectors safely (avoid division by zero)
+    # Direction vectors (normalize safely)
     direction_vectors = np.zeros_like(deltas)
     nonzero_mask = deviations > 0
     direction_vectors[nonzero_mask] = deltas[nonzero_mask] / deviations[nonzero_mask, None]
 
-    # Distances to move = deviation - tolerance (only for out-of-spec points)
-    correction_distances = np.maximum(deviations - htol_array, 0)
+    # Initialize corrected points as actuals
+    corrected_xpr = xpr_coords.copy()
 
-    # Apply correction
-    corrected_xpr = xpr_coords + direction_vectors * correction_distances[:, None]
+    # --- Upper side (dev > HTol) ---
+    too_high = deviations > htol_array
+    corrected_xpr[too_high] = (
+        xpn_coords[too_high] + direction_vectors[too_high] * htol_array[too_high, None]
+    )
 
-    # Final deviation after correction
+    # --- Lower side (dev < -LTol) ---
+    too_low = deviations < -ltol_array
+    corrected_xpr[too_low] = (
+        xpn_coords[too_low] + direction_vectors[too_low] * (-ltol_array[too_low, None])
+    )
+
+    # --- Final deviations after correction ---
     final_deviation = np.linalg.norm(xpn_coords - corrected_xpr, axis=1)
 
-    # Actual correction magnitudes
+    # --- Correction magnitudes ---
     correction_magnitude = np.linalg.norm(corrected_xpr - xpr_coords, axis=1)
 
-    # Remarks
-    eps = 1e-6  # small margin for floating point errors
-    remarks = np.where(final_deviation <= htol_array + eps,
-                "Within tolerance", "Out of spec")
-
-
-    # remarks = np.where(final_deviation <= htol_array, "Within tolerance", "Out of spec")
+    # --- Remarks ---
+    eps = 1e-6  # floating-point margin
+    within_tol = (final_deviation <= htol_array + eps) & (final_deviation >= -ltol_array - eps)
+    remarks = np.where(within_tol, "Within tolerance", "Out of spec")
 
     return corrected_xpr, final_deviation, correction_magnitude, remarks
 
@@ -127,8 +200,9 @@ def apply_correction(report_df, logger=None):
     xpn_coords = out_of_spec_df[['XPN X', 'XPN Y', 'XPN Z']].to_numpy()
     xpr_coords = out_of_spec_df[['XPR X', 'XPR Y', 'XPR Z']].to_numpy()
     htol_array = out_of_spec_df['HTol'].to_numpy()
+    ltol_array = out_of_spec_df['LTol'].to_numpy()
 
-    new_xpr_coords, final_deviation, correction_magnitude, remarks = correct_deviation_batch(xpn_coords, xpr_coords, htol_array)
+    new_xpr_coords, final_deviation, correction_magnitude, remarks = correct_deviation_batch(xpn_coords, xpr_coords, htol_array, ltol_array)
 
     # Logging
     if logger:
@@ -149,6 +223,6 @@ def apply_correction(report_df, logger=None):
     corrected_df.loc[out_of_spec_df.index, 'Deviation'] = final_deviation
     corrected_df.loc[out_of_spec_df.index, 'Correction_Magnitude'] = correction_magnitude
     corrected_df.loc[out_of_spec_df.index, 'Remarks'] = remarks
-    corrected_df['Error'] = corrected_df['Deviation'] - corrected_df['HTol']
+    corrected_df['Error'] = np.where(corrected_df['Deviation'] <= corrected_df['HTol'], 0, corrected_df['Deviation'] - corrected_df['HTol'])
     
     return corrected_df.round(3)

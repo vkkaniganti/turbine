@@ -127,20 +127,25 @@ def save_df_to_pdf(df, path, title="Data Report"):
         # Prepare column widths
         num_columns = len(df.columns)
         if num_columns > 0:
-            # Set last column to be wider, e.g., 15% of table width
-            width_last_col = 0.15
-            
+            col_widths = [1.0/num_columns] * num_columns
             if num_columns > 1:
-                # Distribute the rest of the width among other columns
-                width_other_cols = (1.0 - width_last_col) / (num_columns - 1)
-                col_widths = [width_other_cols] * (num_columns - 1) + [width_last_col]
-            else:
-                # If only one column, it takes up the full width
-                col_widths = [1.0]
-            
+                width_last_col = 0.15
+                col_widths[-1] = width_last_col
+                if num_columns > 2:
+                    width_second_last_col = 0.10
+                    col_widths[-2] = width_second_last_col
+                    
+                    # Distribute the rest of the width among other columns
+                    remaining_width = 1.0 - width_last_col - width_second_last_col
+                    width_other_cols = remaining_width / (num_columns - 2)
+                    for i in range(num_columns - 2):
+                        col_widths[i] = width_other_cols
+                else: # num_columns == 2
+                    col_widths[0] = 1.0 - width_last_col
+
             the_table = ax.table(cellText=df.values, colLabels=df.columns, loc='center', colWidths=col_widths)
-            if num_columns > 1:
-                the_table.auto_set_column_width(col=list(range(num_columns - 1)))
+            # if num_columns > 1:
+            #     the_table.auto_set_column_width(col=list(range(num_columns - 2)))
         else:
             # Fallback for empty dataframe
             the_table = ax.table(cellText=df.values, colLabels=df.columns, loc='center')
@@ -149,19 +154,20 @@ def save_df_to_pdf(df, path, title="Data Report"):
         the_table.set_fontsize(8)
         the_table.scale(1.2, 1.2)
 
-        plt.title(f"{title} - Table", fontsize=12, pad=20)
+        # plt.title(f"{title} - Table", fontsize=12, pad=20)
         pp.savefig(fig, bbox_inches='tight')
         plt.close(fig)
 
-        # --- Page 2: Scatter Plot (Nominal vs Raw) ---
+        # --- Page 2: Line Plot (Nominal vs Raw) ---
         fig, ax = plt.subplots(figsize=(6, 5))
 
-        ax.scatter(df['Original X'], df['Original Y'], c='b', label='XPN - Nominal Data')
-        ax.scatter(df['Actual X'], df['Actual Y'], c='r', label='XPR - Raw Data')
+        ax.plot(df['Original X'], df['Original Y'], color='b', label='XPN - Nominal Data')
+        ax.plot(df['Actual X'], df['Actual Y'], color='r', label='XPR - Raw Data')
+        ax.plot(df['Original X'] + df['HTol'], df['Original Y'] + df['HTol'], color='g', label='Deviation')
 
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
-        ax.set_title(f"{title} - Scatter Plot")
+        ax.set_title(f"{title} - Line Plot")
         ax.legend(loc="best")
 
         pp.savefig(fig, bbox_inches='tight')
@@ -251,9 +257,9 @@ def compute_geometric_features(report_df):
         "LE Thickness Actual": actual_le_thickness_C1,
         "TE Thickness Nominal": nominal_te_thickness_C3,
         "TE Thickness Actual": actual_te_thickness_C3,
-        "X Alignment": x_align,
-        "Y Alignment": y_align,
-        "Rotation Alignment": rot_align,
+        "X Alignment Actual": x_align,
+        "Y Alignment Actual": y_align,
+        "Rotation Alignment Actual": rot_align,
         "Max Profile Error": max_deviation,
         "Min Profile Error": min_deviation,
         "Max Profile Error Point No": max_dev_point_no,
@@ -282,7 +288,7 @@ def generate_cmm_report(report_df, output_pdf, base_name, logger=None):
         meta_top = [
             ["DRAWING NO", "", "REPORT NO", ""],
             ["DESCRIPITION", "", "DATE", ""],
-            ["STAGE", "", "BLADE NO", ""]
+            ['STAGE', "", "BLADE NO", ""]
         ]
         meta_bottom = [
             ["CUSTOMER NAME", ""],
@@ -351,16 +357,51 @@ def generate_cmm_report(report_df, output_pdf, base_name, logger=None):
             "PROF. FORM  MIN", "PROF. FORM  MIN OCCURS POINT NO.",
             "TETA"
         ]
+        
+        feature_data_map = {
+            "MAX. THICK - Cmax": (features.get("MAX. THICK - Cmax nominal"), features.get("MAX. THICK - Cmax actual")),
+            "CHORD LENGTH - B": (features.get("Chord Length Nominal"), features.get("Chord Length Actual")),
+            "LE  CHORD LENGTH -B1": (features.get("LE Chord Length B1 Nominal"), features.get("LE Chord Length B1 Actual")),
+            "TE  CHORD LENGTH -B2": (features.get("TE Chord Length B2 Nominal"), features.get("TE Chord Length B2 Actual")),
+            "LE THICKNESS- N1 @ 2 mm_C1": (features.get("LE Thickness Nominal"), features.get("LE Thickness Actual")),
+            "TE THICKNESS- N1 @ 2 mm_C3": (features.get("TE Thickness Nominal"), features.get("TE Thickness Actual")),
+            "X  AXIS ALIGNMENT": (None, features.get("X Alignment Actual")),
+            "Y  AXIS ALIGNMENT": (None, features.get("Y Alignment Actual")),
+            "ROTATION AXIS ALIGNMENT - DEG": (None, features.get("Rotation Alignment Actual")),
+            "PROF. FORM  MAX": (None, features.get("Max Profile Error")),
+            "PROF. FORM  MAX OCCURS POINT NO.": (None, features.get("Max Profile Error Point No")),
+            "PROF. FORM  MIN": (None, features.get("Min Profile Error")),
+            "PROF. FORM  MIN OCCURS POINT NO.": (None, features.get("Min Profile Error Point No")),
+            "TETA": (None, features.get("TETA")),
+        }
 
         nrows = len(slno_values)
         ncols = len(col_labels)
 
-        # Fill only Sl.No + Description, keep others blank
+        # Fill table data
         table_data = []
         for i in range(nrows):
             row_data = [""] * ncols
             row_data[0] = slno_values[i]
-            row_data[1] = desc_values[i]
+            desc = desc_values[i]
+            row_data[1] = desc
+
+            nominal, actual = feature_data_map.get(desc, (None, None))
+
+            row_data[2] = format_value(nominal)
+            row_data[3] = format_value(actual)
+            
+            # High-Tol and Low-Tol are empty for now
+            row_data[4] = "" 
+            row_data[5] = ""
+
+            diff, error = get_diff_error(nominal, actual)
+            row_data[6] = diff
+            row_data[7] = error
+            
+            # Remarks is empty
+            row_data[8] = ""
+
             table_data.append(row_data)
 
         main_table = ax.table(
@@ -413,4 +454,4 @@ def generate_cmm_report(report_df, output_pdf, base_name, logger=None):
     if logger:
         logger.info(f"Inspection report saved: {output_pdf}")
     else:
-        print(f"✅ Inspection report saved: {output_pydf}")
+        print(f"✅ Inspection report saved: {output_pdf}")

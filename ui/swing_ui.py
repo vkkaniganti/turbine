@@ -142,7 +142,7 @@ class TurbineUI(tk.Tk):
         corrected_xpr_path = os.path.join(reports_dir, f"{self.base_name}_Correction.XPR")
         
      
-        # generate_cmm_report(self.current_report_df,  os.path.join(reports_dir, f"{self.base_name}_CMM_Report.pdf"), self.base_name, logger=logger)
+        generate_cmm_report(self.current_report_df,  os.path.join(reports_dir, f"{self.base_name}_CMM_Report.pdf"), self.base_name, logger=logger)
 
         corrected_xpr_df = self.current_report_df[['Point# (XPN)', 'XPR X', 'XPR Y', 'XPR Z', 'I', 'J', 'K']].copy()
         corrected_xpr_df.columns = ['Point#', 'X', 'Y', 'Z', 'I', 'J', 'K']
