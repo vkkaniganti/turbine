@@ -47,7 +47,7 @@ def compute_report(xpn_df_raw, xpr_df_raw):
         ltol = xpn_df.loc[xpn_df.index[i], 'LTol']
         xpn_p = xpn_coords[i]
         xpr_p = matched_xpr_coords[i]
-        t = np.random.uniform(0.6, 0.95)
+        t = np.random.uniform(0.3, 0.95)
         if dev > htol:  # too high
             direction_vector = (xpr_p - xpn_p) / dev
             corrected_coords[i] = xpn_p + direction_vector * t
